@@ -1,0 +1,7 @@
+"Range (yd)","Drop (MIL)","Wind (MIL)","Notes"
+100,0.00,0.00,"Zero"
+200,0.35,0.10,"",
+300,0.82,0.20,"Validated with Kestrel"
+400,1.38,0.32,"",
+500,2.05,0.45,"Data from GeoBallistics table"
+600,2.83,0.60,""
