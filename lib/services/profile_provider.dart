@@ -6,9 +6,10 @@ import '../utils/dope_calculator.dart';
 import 'db.dart';
 
 class ImportResult {
-  ImportResult({required this.added, this.detectedUnit});
+  ImportResult({required this.added, this.skipped = 0, this.detectedUnit});
 
   final int added;
+  final int skipped;
   final ElevationUnit? detectedUnit;
 }
 
@@ -16,9 +17,11 @@ class ProfileProvider extends ChangeNotifier {
   final _db = AppDatabase.instance;
   List<Profile> _profiles = [];
   bool _isLoading = false;
+  String? _error;
 
   List<Profile> get profiles => _profiles;
   bool get isLoading => _isLoading;
+  String? get error => _error;
 
   Profile? getProfileById(int id) {
     try {
@@ -30,10 +33,16 @@ class ProfileProvider extends ChangeNotifier {
 
   Future<void> loadProfiles() async {
     _isLoading = true;
+    _error = null;
     notifyListeners();
-    _profiles = await _db.fetchProfiles();
-    _isLoading = false;
-    notifyListeners();
+    try {
+      _profiles = await _db.fetchProfiles();
+    } catch (e) {
+      _error = 'Failed to load profiles: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
   Future<int> addProfile(String name, ElevationUnit unit, {bool advanced = false}) async {
@@ -81,6 +90,17 @@ class ProfileProvider extends ChangeNotifier {
     bool confirmed = true,
     String? source,
   }) async {
+    if (distance <= 0) {
+      throw ArgumentError('Distance must be positive');
+    }
+    final profile = getProfileById(profileId);
+    if (profile != null) {
+      final exists = profile.dopePoints.any((p) => (p.distanceYards - distance).abs() < 0.001);
+      if (exists) {
+        throw ArgumentError('A DOPE entry for this distance already exists');
+      }
+    }
+
     final newPoint = DopePoint(
       profileId: profileId,
       distanceYards: distance,
@@ -146,7 +166,7 @@ class ProfileProvider extends ChangeNotifier {
     await updateProfile(updated);
   }
 
-  Future<int> importShotViewCsv({
+  Future<ImportResult> importShotViewCsv({
     required int profileId,
     required String csvText,
     double? defaultDistance,
@@ -155,9 +175,9 @@ class ProfileProvider extends ChangeNotifier {
     String sourceLabel = 'ShotView CSV',
   }) async {
     final trimmed = csvText.trim();
-    if (trimmed.isEmpty) return 0;
+    if (trimmed.isEmpty) return ImportResult(added: 0);
     final lines = trimmed.split('\n');
-    if (lines.length <= 1) return 0;
+    if (lines.length <= 1) return ImportResult(added: 0);
 
     final header = _splitCsvLine(lines.first.toLowerCase());
 
@@ -172,7 +192,12 @@ class ProfileProvider extends ChangeNotifier {
     final idxPressure = indexOf(['pressure', 'baro']);
     final idxHumidity = indexOf(['humidity', 'rh']);
 
+    final existingDistances = <double>{
+      ...?getProfileById(profileId)?.dopePoints.map((p) => p.distanceYards),
+    };
+
     int added = 0;
+    int skipped = 0;
     for (int i = 1; i < lines.length; i++) {
       final row = lines[i].trim();
       if (row.isEmpty) continue;
@@ -183,27 +208,42 @@ class ProfileProvider extends ChangeNotifier {
         return double.tryParse(cleaned);
       }
 
-      final distance = parseAt(idxDistance) ?? defaultDistance ?? 100;
-      final elevation = parseAt(idxElevation) ?? defaultElevation ?? 0;
+      final distance = parseAt(idxDistance) ?? defaultDistance;
+      final elevation = parseAt(idxElevation) ?? defaultElevation;
+      if (distance == null || elevation == null || distance <= 0) {
+        skipped++;
+        continue;
+      }
+      final alreadyPresent = existingDistances.any((d) => (d - distance).abs() < 0.001);
+      if (alreadyPresent) {
+        skipped++;
+        continue;
+      }
+
+      existingDistances.add(distance);
       final mv = parseAt(idxMv);
       final temp = parseAt(idxTemp);
       final pressure = parseAt(idxPressure);
       final humidity = parseAt(idxHumidity);
 
-      await addDopePoint(
-        profileId,
-        distance,
-        elevation,
-        muzzleVelocity: mv,
-        temperatureF: temp,
-        pressureInHg: pressure,
-        humidityPercent: humidity,
-        confirmed: markAsConfirmed,
-        source: sourceLabel,
-      );
-      added++;
+      try {
+        await addDopePoint(
+          profileId,
+          distance,
+          elevation,
+          muzzleVelocity: mv,
+          temperatureF: temp,
+          pressureInHg: pressure,
+          humidityPercent: humidity,
+          confirmed: markAsConfirmed,
+          source: sourceLabel,
+        );
+        added++;
+      } catch (_) {
+        skipped++;
+      }
     }
-    return added;
+    return ImportResult(added: added, skipped: skipped);
   }
 
   Future<ImportResult> importBallisticsCsv({
@@ -239,6 +279,7 @@ class ProfileProvider extends ChangeNotifier {
     };
 
     int added = 0;
+    int skipped = 0;
     for (int i = 1; i < lines.length; i++) {
       final row = lines[i].trim();
       if (row.isEmpty) continue;
@@ -252,28 +293,37 @@ class ProfileProvider extends ChangeNotifier {
 
       final distance = parseAt(idxDistance);
       final elevation = parseAt(idxElevation);
-      if (distance == null || elevation == null) continue;
+      if (distance == null || elevation == null) {
+        skipped++;
+        continue;
+      }
 
       // Skip the built-in 100 yard zero and any duplicate range entries to avoid
       // cluttering imported profiles with redundant rows.
       if ((distance - 100).abs() < 0.001 && elevation.abs() < 0.001) {
+        skipped++;
         continue;
       }
       final alreadyPresent = existingDistances.any((d) => (d - distance).abs() < 0.001);
       if (alreadyPresent) {
+        skipped++;
         continue;
       }
 
       existingDistances.add(distance);
 
-      await addDopePoint(
-        profileId,
-        distance,
-        elevation,
-        confirmed: markAsConfirmed,
-        source: sourceLabel,
-      );
-      added++;
+      try {
+        await addDopePoint(
+          profileId,
+          distance,
+          elevation,
+          confirmed: markAsConfirmed,
+          source: sourceLabel,
+        );
+        added++;
+      } catch (_) {
+        skipped++;
+      }
     }
 
     // Update profile unit if the CSV clearly indicated another unit.
@@ -283,7 +333,7 @@ class ProfileProvider extends ChangeNotifier {
       await updateProfile(updated);
     }
 
-    return ImportResult(added: added, detectedUnit: detectedUnit ?? fallbackUnit);
+    return ImportResult(added: added, skipped: skipped, detectedUnit: detectedUnit ?? fallbackUnit);
   }
 
   List<String> _splitCsvLine(String line) {

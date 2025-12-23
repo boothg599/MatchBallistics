@@ -35,6 +35,25 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
   String? _cosine;
   CsvTemplate _template = CsvTemplate.shotView;
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<bool> _confirmDelete(String subject) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Confirm delete'),
+            content: Text('Delete $subject? This cannot be undone.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+              ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   @override
   void dispose() {
     _distanceController.dispose();
@@ -54,26 +73,80 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
   void _addDope(ProfileProvider provider, Profile profile) async {
     final distance = double.tryParse(_distanceController.text);
     final elevation = double.tryParse(_elevationController.text);
-    if (distance == null || elevation == null) return;
-    final mv = profile.advancedMode ? double.tryParse(_mvController.text) : null;
-    final temp = profile.advancedMode ? double.tryParse(_tempController.text) : null;
-    final pressure = profile.advancedMode ? double.tryParse(_pressureController.text) : null;
-    final humidity = profile.advancedMode ? double.tryParse(_humidityController.text) : null;
-    await provider.addDopePoint(
-      profile.id!,
-      distance,
-      elevation,
-      muzzleVelocity: mv,
-      temperatureF: temp,
-      pressureInHg: pressure,
-      humidityPercent: humidity,
-    );
-    _distanceController.clear();
-    _elevationController.clear();
-    _mvController.clear();
-    _tempController.clear();
-    _pressureController.clear();
-    _humidityController.clear();
+    if (distance == null || elevation == null) {
+      _showMessage('Enter valid numeric distance and elevation.');
+      return;
+    }
+    if (distance <= 0 || distance > 3000) {
+      _showMessage('Distance must be between 0 and 3000 yards.');
+      return;
+    }
+    if (elevation.abs() > 100) {
+      _showMessage('Elevation adjustment looks unreasonable. Please review.');
+      return;
+    }
+
+    final duplicate = profile.dopePoints.any((p) => (p.distanceYards - distance).abs() < 0.001);
+    if (duplicate) {
+      _showMessage('A DOPE point already exists for ${_formatter.format(distance)} yards.');
+      return;
+    }
+
+    double? mv;
+    double? temp;
+    double? pressure;
+    double? humidity;
+    if (profile.advancedMode) {
+      if (_mvController.text.isNotEmpty) {
+        mv = double.tryParse(_mvController.text);
+        if (mv == null) {
+          _showMessage('Enter a valid muzzle velocity.');
+          return;
+        }
+      }
+      if (_tempController.text.isNotEmpty) {
+        temp = double.tryParse(_tempController.text);
+        if (temp == null) {
+          _showMessage('Enter a valid temperature.');
+          return;
+        }
+      }
+      if (_pressureController.text.isNotEmpty) {
+        pressure = double.tryParse(_pressureController.text);
+        if (pressure == null) {
+          _showMessage('Enter a valid pressure.');
+          return;
+        }
+      }
+      if (_humidityController.text.isNotEmpty) {
+        humidity = double.tryParse(_humidityController.text);
+        if (humidity == null) {
+          _showMessage('Enter a valid humidity percentage.');
+          return;
+        }
+      }
+    }
+
+    try {
+      await provider.addDopePoint(
+        profile.id!,
+        distance,
+        elevation,
+        muzzleVelocity: mv,
+        temperatureF: temp,
+        pressureInHg: pressure,
+        humidityPercent: humidity,
+      );
+      _distanceController.clear();
+      _elevationController.clear();
+      _mvController.clear();
+      _tempController.clear();
+      _pressureController.clear();
+      _humidityController.clear();
+      _showMessage('Saved DOPE for ${_formatter.format(distance)} yards.');
+    } catch (e) {
+      _showMessage(e.toString());
+    }
   }
 
   Future<void> _loadSampleCsv(BuildContext context, CsvTemplate template) async {
@@ -189,9 +262,10 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                     onPressed: () async {
                       final defaultDistance = double.tryParse(_csvDistanceController.text);
                       final defaultElevation = double.tryParse(_csvElevationController.text);
+                      ImportResult? result;
                       int added = 0;
                       if (_template == CsvTemplate.shotView) {
-                        added = await provider.importShotViewCsv(
+                        result = await provider.importShotViewCsv(
                           profileId: profile.id!,
                           csvText: _csvController.text,
                           defaultDistance: defaultDistance,
@@ -199,8 +273,9 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           markAsConfirmed: true,
                           sourceLabel: _template.sourceLabel,
                         );
+                        added = result.added;
                       } else {
-                        final result = await provider.importBallisticsCsv(
+                        result = await provider.importBallisticsCsv(
                           profileId: profile.id!,
                           csvText: _csvController.text,
                           fallbackUnit: profile.unit,
@@ -211,8 +286,11 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                       }
                       if (!mounted) return;
                       Navigator.pop(context);
+                      final skippedText = result != null && result.skipped > 0
+                          ? ' (${result.skipped} skipped)'
+                          : '';
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Imported $added shots from ${_template.label}')),
+                        SnackBar(content: Text('Imported $added shots from ${_template.label}$skippedText')),
                       );
                       _csvController.clear();
                       _csvDistanceController.clear();
@@ -348,7 +426,14 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                                 ),
                               IconButton(
                                 icon: const Icon(Icons.delete_outline),
-                                onPressed: () => provider.deleteDopePoint(profile.id!, p.id!),
+                                onPressed: () async {
+                                  final ok = await _confirmDelete('${_formatter.format(p.distanceYards)} yd entry');
+                                  if (ok) {
+                                    await provider.deleteDopePoint(profile.id!, p.id!);
+                                    if (!mounted) return;
+                                    _showMessage('Deleted DOPE at ${_formatter.format(p.distanceYards)} yards.');
+                                  }
+                                },
                               ),
                             ],
                           ),
