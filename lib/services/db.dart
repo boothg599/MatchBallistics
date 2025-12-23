@@ -9,7 +9,7 @@ import '../models/profile.dart';
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._internal();
   static const _dbName = 'empirical_dope.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _database;
 
@@ -29,6 +29,10 @@ class AppDatabase {
       version: _dbVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+        await db.execute('PRAGMA journal_mode = WAL');
+      },
     );
   }
 
@@ -54,7 +58,8 @@ class AppDatabase {
         humidity_percent REAL,
         confirmed INTEGER NOT NULL DEFAULT 1,
         source TEXT,
-        FOREIGN KEY (profile_id) REFERENCES profiles (id) ON DELETE CASCADE
+        FOREIGN KEY (profile_id) REFERENCES profiles (id) ON DELETE CASCADE,
+        UNIQUE(profile_id, distance_yards)
       )
     ''');
   }
@@ -71,19 +76,34 @@ class AppDatabase {
       await db.execute('ALTER TABLE dope_points ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1;');
       await db.execute('ALTER TABLE dope_points ADD COLUMN source TEXT;');
     }
+    if (oldVersion < 4) {
+      await db.execute('''
+        DELETE FROM dope_points
+        WHERE rowid NOT IN (
+          SELECT MIN(rowid) FROM dope_points GROUP BY profile_id, distance_yards
+        );
+      ''');
+      await db.execute(
+          'CREATE UNIQUE INDEX IF NOT EXISTS idx_dope_profile_distance ON dope_points(profile_id, distance_yards);');
+    }
   }
 
   Future<int> insertProfile(Profile profile) async {
     final db = await database;
-    final profileId = await db.insert('profiles', profile.toMap());
-    await insertDopePoint(DopePoint(
-      profileId: profileId,
-      distanceYards: 100,
-      elevation: 0,
-      confirmed: true,
-      source: 'Zero',
-    ));
-    return profileId;
+    return db.transaction<int>((txn) async {
+      final profileId = await txn.insert('profiles', profile.toMap());
+      await txn.insert(
+        'dope_points',
+        DopePoint(
+          profileId: profileId,
+          distanceYards: 100,
+          elevation: 0,
+          confirmed: true,
+          source: 'Zero',
+        ).toMap(),
+      );
+      return profileId;
+    });
   }
 
   Future<void> updateProfile(Profile profile) async {
@@ -125,27 +145,35 @@ class AppDatabase {
   Future<List<Profile>> fetchProfiles() async {
     final db = await database;
     final profileMaps = await db.query('profiles');
-    final profiles = <Profile>[];
+    final pointMaps = await db.query(
+      'dope_points',
+      orderBy: 'profile_id ASC, distance_yards ASC',
+    );
 
+    final grouped = <int, List<DopePoint>>{};
+    for (final map in pointMaps) {
+      final point = DopePoint.fromMap(map);
+      grouped.putIfAbsent(point.profileId, () => []).add(point);
+    }
+
+    final profiles = <Profile>[];
     for (final map in profileMaps) {
       final profileId = map['id'] as int;
-      final points = await db.query(
-        'dope_points',
-        where: 'profile_id = ?',
-        whereArgs: [profileId],
-        orderBy: 'distance_yards ASC',
-      );
-      final dopePoints = points.map((p) => DopePoint.fromMap(p)).toList();
-      if (!dopePoints.any((p) => p.distanceYards == 100)) {
-        await insertDopePoint(DopePoint(
+      final dopePoints = [...?grouped[profileId]];
+      final hasZero = dopePoints.any((p) => p.distanceYards == 100);
+      if (!hasZero) {
+        final zeroPoint = DopePoint(
           profileId: profileId,
           distanceYards: 100,
           elevation: 0,
           confirmed: true,
           source: 'Zero',
-        ));
-        dopePoints.add(DopePoint(profileId: profileId, distanceYards: 100, elevation: 0, confirmed: true, source: 'Zero'));
+        );
+        final zeroId = await db.insert('dope_points', zeroPoint.toMap());
+        dopePoints.add(zeroPoint.copyWith(id: zeroId));
       }
+
+      dopePoints.sort((a, b) => a.distanceYards.compareTo(b.distanceYards));
       profiles.add(Profile.fromMap(map, dopePoints));
     }
 

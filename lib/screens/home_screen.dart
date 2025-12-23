@@ -19,6 +19,27 @@ class _HomeScreenState extends State<HomeScreen> {
   ElevationUnit _unit = ElevationUnit.mil;
   bool _advanced = false;
 
+  Future<bool> _confirmDelete(String subject) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Confirm delete'),
+            content: Text('Delete "$subject"? This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -168,8 +189,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (name.isEmpty || csvController.text.trim().isEmpty) return;
                       final profileId = await provider.addProfile(name, unit, advanced: advanced);
                       int added = 0;
+                      ImportResult? result;
                       if (template == CsvTemplate.shotView) {
-                        added = await provider.importShotViewCsv(
+                        result = await provider.importShotViewCsv(
                           profileId: profileId,
                           csvText: csvController.text,
                           defaultDistance: 100,
@@ -177,8 +199,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           markAsConfirmed: true,
                           sourceLabel: template.sourceLabel,
                         );
+                        added = result.added;
                       } else {
-                        final result = await provider.importBallisticsCsv(
+                        result = await provider.importBallisticsCsv(
                           profileId: profileId,
                           csvText: csvController.text,
                           fallbackUnit: unit,
@@ -190,8 +213,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       if (!mounted) return;
                       Navigator.pop(context);
+                      final skippedText = result != null && result.skipped > 0
+                          ? ' (${result.skipped} skipped)'
+                          : '';
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Created $name with $added imported points')),
+                        SnackBar(content: Text('Created $name with $added imported points$skippedText')),
                       );
                       Navigator.push(
                         context,
@@ -233,31 +259,58 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: provider.isLoading
           ? const Center(child: CircularProgressIndicator())
-          : provider.profiles.isEmpty
-              ? const Center(child: Text('No profiles yet. Add one to get started.'))
-              : ListView.builder(
-                  itemCount: provider.profiles.length,
-                  itemBuilder: (context, index) {
-                    final profile = provider.profiles[index];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      child: ListTile(
-                        title: Text(profile.name),
-                        subtitle: Text('${profile.unit.label} • ${profile.dopePoints.length} DOPE points'),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => provider.deleteProfile(profile.id!),
-                        ),
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ProfileDetailScreen(profileId: profile.id!),
+          : provider.error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(provider.error!, textAlign: TextAlign.center),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: provider.loadProfiles,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Retry'),
+                        )
+                      ],
+                    ),
+                  ),
+                )
+              : provider.profiles.isEmpty
+                  ? const Center(child: Text('No profiles yet. Add one to get started.'))
+                  : ListView.builder(
+                      itemCount: provider.profiles.length,
+                      itemBuilder: (context, index) {
+                        final profile = provider.profiles[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          child: ListTile(
+                            title: Text(profile.name),
+                            subtitle: Text('${profile.unit.label} • ${profile.dopePoints.length} DOPE points'),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline),
+                              onPressed: () async {
+                                final ok = await _confirmDelete(profile.name);
+                                if (ok) {
+                                  await provider.deleteProfile(profile.id!);
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Deleted profile ${profile.name}')),
+                                  );
+                                }
+                              },
+                            ),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => ProfileDetailScreen(profileId: profile.id!),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                        );
+                      },
+                    ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showCreateProfileDialog(provider),
         icon: const Icon(Icons.add),
