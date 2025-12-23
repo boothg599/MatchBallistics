@@ -31,12 +31,17 @@ class DopeCalculator {
     }
 
     if (uniquePoints.length >= 3) {
-      final fit = fitQuadratic(
-        uniquePoints,
-        confirmedOnly: false,
-      );
-      final y = fit.evaluate(distance);
-      return y;
+      try {
+        final fit = fitQuadratic(
+          uniquePoints,
+          confirmedOnly: false,
+        );
+        if (distance >= fit.minDistance && distance <= fit.maxDistance) {
+          return fit.evaluate(distance);
+        }
+      } catch (_) {
+        // Fall through to linear interpolation when a quadratic fit is not available.
+      }
     }
 
     if (uniquePoints.length >= 2) {

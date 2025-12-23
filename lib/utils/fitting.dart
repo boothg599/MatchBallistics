@@ -54,6 +54,8 @@ FitResult fitQuadratic(
     throw StateError('Need at least 3 confirmed points to fit quadratic');
   }
 
+  final distances = filteredPoints.map((p) => p.distanceYards).toList();
+
   double sx = 0, sx2 = 0, sx3 = 0, sx4 = 0;
   double sy = 0, sxy = 0, sx2y = 0;
 
@@ -92,7 +94,6 @@ FitResult fitQuadratic(
   }
 
   final rmse = sqrt(ssRes / n);
-  final distances = filteredPoints.map((p) => p.distanceYards);
 
   return FitResult(
     coefficients: coeffs,
