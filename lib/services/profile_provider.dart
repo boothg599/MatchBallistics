@@ -47,7 +47,6 @@ class ProfileProvider extends ChangeNotifier {
 
   Future<int> addProfile(String name, ElevationUnit unit, {bool advanced = false}) async {
     final profile = Profile(
-      id: null,
       name: name,
       unit: unit,
       dopePoints: [],
@@ -58,7 +57,6 @@ class ProfileProvider extends ChangeNotifier {
       profileId: id,
       distanceYards: 100,
       elevation: 0,
-      confirmed: true,
       source: 'Zero',
     );
     final newProfile = profile.copyWith(id: id, dopePoints: [basePoint]);
@@ -176,10 +174,24 @@ class ProfileProvider extends ChangeNotifier {
   }) async {
     final trimmed = csvText.trim();
     if (trimmed.isEmpty) return ImportResult(added: 0);
-    final lines = trimmed.split('\n');
+    final lines = trimmed.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
     if (lines.length <= 1) return ImportResult(added: 0);
 
-    final header = _splitCsvLine(lines.first.toLowerCase());
+    // Find the header row by looking for common column names
+    int headerIdx = -1;
+    List<String> header = [];
+    for (int i = 0; i < lines.length; i++) {
+      final cols = _splitCsvLine(lines[i].toLowerCase());
+      if (cols.any((c) => c.contains('speed') || c.contains('velocity') || 
+                           c.contains('fps') || c.contains('distance') || 
+                           c.contains('range'),)) {
+        headerIdx = i;
+        header = cols;
+        break;
+      }
+    }
+
+    if (headerIdx == -1) return ImportResult(added: 0);
 
     int indexOf(List<String> names) {
       return header.indexWhere((h) => names.any((n) => h.contains(n)));
@@ -187,7 +199,7 @@ class ProfileProvider extends ChangeNotifier {
 
     final idxDistance = indexOf(['distance', 'range']);
     final idxElevation = indexOf(['elevation', 'adj']);
-    final idxMv = indexOf(['muzzle', 'velocity', 'mv']);
+    final idxMv = indexOf(['speed', 'velocity', 'fps']);
     final idxTemp = indexOf(['temp']);
     final idxPressure = indexOf(['pressure', 'baro']);
     final idxHumidity = indexOf(['humidity', 'rh']);
@@ -198,49 +210,74 @@ class ProfileProvider extends ChangeNotifier {
 
     int added = 0;
     int skipped = 0;
-    for (int i = 1; i < lines.length; i++) {
+    
+    // Start processing from the row after the header
+    for (int i = headerIdx + 1; i < lines.length; i++) {
       final row = lines[i].trim();
       if (row.isEmpty) continue;
+      
+      // Skip summary rows (AVERAGE, STD DEV, etc.)
+      final rowLower = row.toLowerCase();
+      if (rowLower.startsWith('average') || rowLower.startsWith('std') || 
+          rowLower.startsWith('spread') || rowLower.startsWith('date') ||
+          rowLower.startsWith('session') || rowLower.startsWith('all shots') ||
+          rowLower.startsWith('projectile') || row.startsWith('-')) {
+        continue;
+      }
+      
       final cols = _splitCsvLine(row);
+      
+      // Skip rows that don't have enough columns
+      if (cols.length < 2) continue;
+      
       double? parseAt(int idx) {
         if (idx < 0 || idx >= cols.length) return null;
         final cleaned = cols[idx].replaceAll(RegExp(r'[^0-9.-]'), '');
-        return double.tryParse(cleaned);
+        final parsed = double.tryParse(cleaned);
+        return (parsed != null && parsed.isFinite) ? parsed : null;
       }
 
       final distance = parseAt(idxDistance) ?? defaultDistance;
       final elevation = parseAt(idxElevation) ?? defaultElevation;
-      if (distance == null || elevation == null || distance <= 0) {
-        skipped++;
-        continue;
-      }
-      final alreadyPresent = existingDistances.any((d) => (d - distance).abs() < 0.001);
-      if (alreadyPresent) {
-        skipped++;
-        continue;
-      }
-
-      existingDistances.add(distance);
       final mv = parseAt(idxMv);
-      final temp = parseAt(idxTemp);
-      final pressure = parseAt(idxPressure);
-      final humidity = parseAt(idxHumidity);
+      
+      // For ShotView, if we have MV but no distance/elevation, use defaults
+      if (mv != null && mv > 0) {
+        final finalDistance = distance ?? defaultDistance;
+        final finalElevation = elevation ?? defaultElevation;
+        
+        if (finalDistance == null || finalElevation == null || finalDistance <= 0) {
+          skipped++;
+          continue;
+        }
+        
+        final alreadyPresent = existingDistances.any((d) => (d - finalDistance).abs() < 0.001);
+        if (alreadyPresent) {
+          skipped++;
+          continue;
+        }
 
-      try {
-        await addDopePoint(
-          profileId,
-          distance,
-          elevation,
-          muzzleVelocity: mv,
-          temperatureF: temp,
-          pressureInHg: pressure,
-          humidityPercent: humidity,
-          confirmed: markAsConfirmed,
-          source: sourceLabel,
-        );
-        added++;
-      } catch (_) {
-        skipped++;
+        existingDistances.add(finalDistance);
+        final temp = parseAt(idxTemp);
+        final pressure = parseAt(idxPressure);
+        final humidity = parseAt(idxHumidity);
+
+        try {
+          await addDopePoint(
+            profileId,
+            finalDistance,
+            finalElevation,
+            muzzleVelocity: mv,
+            temperatureF: temp,
+            pressureInHg: pressure,
+            humidityPercent: humidity,
+            confirmed: markAsConfirmed,
+            source: sourceLabel,
+          );
+          added++;
+        } catch (_) {
+          skipped++;
+        }
       }
     }
     return ImportResult(added: added, skipped: skipped);
@@ -255,24 +292,43 @@ class ProfileProvider extends ChangeNotifier {
   }) async {
     final trimmed = csvText.trim();
     if (trimmed.isEmpty) return ImportResult(added: 0);
-    final lines = trimmed.split('\n');
+    final lines = trimmed.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
     if (lines.length <= 1) return ImportResult(added: 0);
 
-    final header = _splitCsvLine(lines.first.toLowerCase());
+    // Find the header row by looking for range/distance and elevation columns
+    int headerIdx = -1;
+    List<String> header = [];
+    ElevationUnit? detectedUnit;
+    
+    for (int i = 0; i < lines.length; i++) {
+      final cols = _splitCsvLine(lines[i].toLowerCase());
+      
+      // Check if this looks like a header row
+      final hasRange = cols.any((c) => c.contains('range') || c.contains('distance') || c.contains('yard'));
+      final hasElev = cols.any((c) => c.contains('elev') || c.contains('drop') || c.contains('dope'));
+      
+      if (hasRange && hasElev) {
+        headerIdx = i;
+        header = cols;
+        
+        // Detect unit from header
+        if (header.any((h) => h.contains('moa'))) {
+          detectedUnit = ElevationUnit.moa;
+        } else if (header.any((h) => h.contains('mil') || h.contains('mrad'))) {
+          detectedUnit = ElevationUnit.mil;
+        }
+        break;
+      }
+    }
+
+    if (headerIdx == -1) return ImportResult(added: 0);
 
     int indexOf(List<String> names) {
       return header.indexWhere((h) => names.any((n) => h.contains(n)));
     }
 
-    final idxDistance = indexOf(['distance', 'range', 'yard', 'yd']);
-    final idxElevation = indexOf(['drop', 'dope', 'elevation', 'adj']);
-
-    ElevationUnit? detectedUnit;
-    if (header.any((h) => h.contains('moa'))) {
-      detectedUnit = ElevationUnit.moa;
-    } else if (header.any((h) => h.contains('mil') || h.contains('mrad'))) {
-      detectedUnit = ElevationUnit.mil;
-    }
+    final idxDistance = indexOf(['range', 'distance', 'yard', 'yd']);
+    final idxElevation = indexOf(['elev', 'drop', 'dope', 'elevation']);
 
     final existingDistances = <double>{
       ...?getProfileById(profileId)?.dopePoints.map((p) => p.distanceYards),
@@ -280,30 +336,39 @@ class ProfileProvider extends ChangeNotifier {
 
     int added = 0;
     int skipped = 0;
-    for (int i = 1; i < lines.length; i++) {
+    
+    // Start processing from the row after the header
+    for (int i = headerIdx + 1; i < lines.length; i++) {
       final row = lines[i].trim();
       if (row.isEmpty) continue;
+      
       final cols = _splitCsvLine(row);
+      
+      // Skip rows that don't have enough columns
+      if (cols.length < 2) continue;
 
       double? parseAt(int idx) {
         if (idx < 0 || idx >= cols.length) return null;
+        // Remove all non-numeric characters except digits, decimal point, and minus sign
         final cleaned = cols[idx].replaceAll(RegExp(r'[^0-9.-]'), '');
-        return double.tryParse(cleaned);
+        final parsed = double.tryParse(cleaned);
+        return (parsed != null && parsed.isFinite) ? parsed : null;
       }
 
       final distance = parseAt(idxDistance);
       final elevation = parseAt(idxElevation);
-      if (distance == null || elevation == null) {
+      
+      if (distance == null || elevation == null || distance <= 0) {
         skipped++;
         continue;
       }
 
-      // Skip the built-in 100 yard zero and any duplicate range entries to avoid
-      // cluttering imported profiles with redundant rows.
+      // Skip the built-in 100 yard zero and any duplicate range entries
       if ((distance - 100).abs() < 0.001 && elevation.abs() < 0.001) {
         skipped++;
         continue;
       }
+      
       final alreadyPresent = existingDistances.any((d) => (d - distance).abs() < 0.001);
       if (alreadyPresent) {
         skipped++;
@@ -326,7 +391,7 @@ class ProfileProvider extends ChangeNotifier {
       }
     }
 
-    // Update profile unit if the CSV clearly indicated another unit.
+    // Update profile unit if the CSV clearly indicated another unit
     final profile = getProfileById(profileId);
     if (profile != null && detectedUnit != null && detectedUnit != profile.unit) {
       final updated = profile.copyWith(unit: detectedUnit);
@@ -337,12 +402,15 @@ class ProfileProvider extends ChangeNotifier {
   }
 
   List<String> _splitCsvLine(String line) {
+    // Remove BOM and other invisible characters
+    final cleaned = line.replaceAll('\ufeff', '').replaceAll('\u200b', '');
+    
     final parts = <String>[];
     final buffer = StringBuffer();
     bool inQuotes = false;
 
-    for (var i = 0; i < line.length; i++) {
-      final ch = line[i];
+    for (var i = 0; i < cleaned.length; i++) {
+      final ch = cleaned[i];
       if (ch == '"') {
         inQuotes = !inQuotes;
       } else if (ch == ',' && !inQuotes) {

@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../models/import_template.dart';
 import '../models/dope_point.dart';
@@ -33,7 +37,6 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
   final _formatter = NumberFormat('##0.00');
   String? _prediction;
   String? _cosine;
-  CsvTemplate _template = CsvTemplate.shotView;
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -166,6 +169,71 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
     }
   }
 
+  Future<void> _pickCsvFile(BuildContext context) async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'txt'],
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        String? content;
+        
+        // Try to read from bytes first (web, some mobile scenarios)
+        if (file.bytes != null) {
+          try {
+            content = utf8.decode(file.bytes!, allowMalformed: true);
+          } catch (_) {
+            content = latin1.decode(file.bytes!);
+          }
+        } 
+        // Read from file path (mobile, desktop)
+        else if (file.path != null) {
+          final ioFile = File(file.path!);
+          final bytes = await ioFile.readAsBytes();
+          
+          // Try UTF-8 first, then fall back to Latin-1 (Windows-1252)
+          try {
+            content = utf8.decode(bytes, allowMalformed: true);
+          } catch (_) {
+            try {
+              content = latin1.decode(bytes);
+            } catch (_) {
+              // Last resort: decode as ASCII, replacing invalid chars
+              content = String.fromCharCodes(
+                bytes.map((b) => b > 127 ? 63 : b), // Replace non-ASCII with '?'
+              );
+            }
+          }
+        }
+        
+        if (content != null && content.isNotEmpty) {
+          _csvController.text = content.trim();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Loaded ${file.name}')),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Unable to read file or file is empty')),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading file: ${e.toString().split(':').first}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   void _predict(ProfileProvider provider, Profile profile) {
     final distance = double.tryParse(_targetController.text);
     if (distance == null) return;
@@ -200,44 +268,55 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                 children: [
                   const Text('Import CSV'),
                   const SizedBox(height: 8),
-                  DropdownButtonFormField<CsvTemplate>(
-                    value: _template,
-                    decoration: const InputDecoration(labelText: 'Source'),
-                    items: CsvTemplate.values
-                        .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
-                        .toList(),
-                    onChanged: (val) => setModalState(() => _template = val ?? CsvTemplate.shotView),
+                  const Text(
+                    'Import ballistic data from ShotView, GeoBallistics, or AB Quantum exports. The format will be detected automatically.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
-                  const SizedBox(height: 8),
-                  if (_template == CsvTemplate.shotView) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _csvDistanceController,
-                            decoration: const InputDecoration(labelText: 'Default distance (yd)'),
-                            keyboardType: TextInputType.number,
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _csvDistanceController,
+                          decoration: const InputDecoration(
+                            labelText: 'Default distance (yd)',
+                            helperText: 'Optional: for velocity-only data',
                           ),
+                          keyboardType: TextInputType.number,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _csvElevationController,
-                            decoration: InputDecoration(labelText: 'Default elevation (${profile.unit.label})'),
-                            keyboardType: TextInputType.number,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _csvElevationController,
+                          decoration: InputDecoration(
+                            labelText: 'Default elevation (${profile.unit.label})',
+                            helperText: 'Optional: for velocity-only data',
                           ),
+                          keyboardType: TextInputType.number,
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                  ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   Wrap(
                     spacing: 8,
                     children: [
                       TextButton.icon(
-                        onPressed: () => _loadSampleCsv(context, _template),
+                        onPressed: () => _pickCsvFile(context),
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('Browse file'),
+                      ),
+                      PopupMenuButton<CsvTemplate>(
                         icon: const Icon(Icons.file_download_outlined),
-                        label: const Text('Load example CSV'),
+                        tooltip: 'Load example CSV',
+                        onSelected: (template) => _loadSampleCsv(context, template),
+                        itemBuilder: (context) => CsvTemplate.values
+                            .map((t) => PopupMenuItem(
+                                  value: t,
+                                  child: Text(t.label),
+                                ),)
+                            .toList(),
                       ),
                       TextButton.icon(
                         onPressed: () => _csvController.clear(),
@@ -249,9 +328,9 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: _csvController,
-                    decoration: InputDecoration(
-                      labelText: 'Paste CSV contents',
-                      hintText: 'Copy from ${_template.label} export and paste here',
+                    decoration: const InputDecoration(
+                      labelText: 'CSV contents',
+                      hintText: 'Browse for a file or paste CSV text here',
                       alignLabelWithHint: true,
                     ),
                     maxLines: 8,
@@ -262,36 +341,46 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                     onPressed: () async {
                       final defaultDistance = double.tryParse(_csvDistanceController.text);
                       final defaultElevation = double.tryParse(_csvElevationController.text);
-                      ImportResult? result;
-                      int added = 0;
-                      if (_template == CsvTemplate.shotView) {
+                      
+                      // Try ballistics CSV first (most common format)
+                      var result = await provider.importBallisticsCsv(
+                        profileId: profile.id!,
+                        csvText: _csvController.text,
+                        fallbackUnit: profile.unit,
+                        sourceLabel: 'CSV Import',
+                      );
+                      
+                      // If no data imported, try ShotView format
+                      if (result.added == 0 && (defaultDistance != null || defaultElevation != null)) {
                         result = await provider.importShotViewCsv(
                           profileId: profile.id!,
                           csvText: _csvController.text,
                           defaultDistance: defaultDistance,
                           defaultElevation: defaultElevation,
-                          markAsConfirmed: true,
-                          sourceLabel: _template.sourceLabel,
+                          sourceLabel: 'CSV Import',
                         );
-                        added = result.added;
-                      } else {
-                        result = await provider.importBallisticsCsv(
-                          profileId: profile.id!,
-                          csvText: _csvController.text,
-                          fallbackUnit: profile.unit,
-                          sourceLabel: _template.sourceLabel,
-                          markAsConfirmed: false,
-                        );
-                        added = result.added;
                       }
+                      
                       if (!mounted) return;
                       Navigator.pop(context);
-                      final skippedText = result != null && result.skipped > 0
+                      
+                      final skippedText = result.skipped > 0
                           ? ' (${result.skipped} skipped)'
                           : '';
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Imported $added shots from ${_template.label}$skippedText')),
-                      );
+                      
+                      if (result.added > 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Imported ${result.added} data points$skippedText')),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('No data imported. Check CSV format and try again.'),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                      }
+                      
                       _csvController.clear();
                       _csvDistanceController.clear();
                       _csvElevationController.clear();
@@ -303,12 +392,12 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                   const Text(
                     'Data imported from other ballistics apps is treated as unconfirmed test data until you validate it.',
                     style: TextStyle(fontSize: 12),
-                  )
+                  ),
                 ],
               ),
             ),
           );
-        });
+        },);
       },
     );
   }
@@ -316,16 +405,16 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
   String _metaForPoint(DopePoint p) {
     final parts = <String>[];
     if (p.muzzleVelocity != null) {
-      parts.add('MV ${_formatter.format(p.muzzleVelocity!)} fps');
+      parts.add('MV ${_formatter.format(p.muzzleVelocity)} fps');
     }
     if (p.temperatureF != null) {
-      parts.add('Temp ${_formatter.format(p.temperatureF!)}°F');
+      parts.add('Temp ${_formatter.format(p.temperatureF)}°F');
     }
     if (p.pressureInHg != null) {
-      parts.add('Pressure ${_formatter.format(p.pressureInHg!)} inHg');
+      parts.add('Pressure ${_formatter.format(p.pressureInHg)} inHg');
     }
     if (p.humidityPercent != null) {
-      parts.add('Humidity ${_formatter.format(p.humidityPercent!)}%');
+      parts.add('Humidity ${_formatter.format(p.humidityPercent)}%');
     }
     if (p.source != null) {
       parts.add(p.source!);
@@ -357,7 +446,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
               final updated = profile.copyWith(unit: newUnit);
               await provider.updateProfile(updated);
             },
-          )
+          ),
         ],
       ),
       body: SingleChildScrollView(
@@ -373,10 +462,10 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
             ),
             const Text('Known DOPE', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Card(
+            const Card(
               child: ListTile(
                 title: Row(
-                  children: const [
+                  children: [
                     Expanded(child: Text('Distance (yd)')),
                     Expanded(child: Text('Elevation')),
                     SizedBox(width: 40),
@@ -528,7 +617,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           onPressed: () => _showCsvImport(provider, profile),
                           icon: const Icon(Icons.file_upload_outlined),
                           label: const Text('Import CSV'),
-                        )
+                        ),
                       ],
                     ),
                   ],
@@ -563,7 +652,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                     if (_prediction != null) ...[
                       const SizedBox(height: 8),
                       Text('Elevation: $_prediction'),
-                    ]
+                    ],
                   ],
                 ),
               ),
@@ -596,7 +685,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                     if (_cosine != null) ...[
                       const SizedBox(height: 8),
                       Text('Multiplier: $_cosine'),
-                    ]
+                    ],
                   ],
                 ),
               ),
@@ -608,7 +697,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
               child: Text(
                 'Windage learning is planned as a future update. Track elevation now and add wind holds later.',
               ),
-            )
+            ),
           ],
         ),
       ),

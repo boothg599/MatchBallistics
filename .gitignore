@@ -2,6 +2,7 @@
 .dart_tool/
 .packages
 .pub-cache/
+.pub/
 build/
 ios/
 android/
@@ -10,6 +11,28 @@ windows/
 linux/
 macos/
 coverage/
+*.log
+*.iml
+*.ipr
+*.iws
+
+# IDE
 .idea/
 .vscode/
-*.iml
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated files
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# Database files (local dev only)
+*.db
+*.db-shm
+*.db-wal

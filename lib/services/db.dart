@@ -9,7 +9,7 @@ import '../models/profile.dart';
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._internal();
   static const _dbName = 'empirical_dope.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _database;
 
@@ -31,7 +31,6 @@ class AppDatabase {
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-        await db.execute('PRAGMA journal_mode = WAL');
       },
     );
   }
@@ -62,6 +61,10 @@ class AppDatabase {
         UNIQUE(profile_id, distance_yards)
       )
     ''');
+
+    await db.execute('''
+      CREATE INDEX idx_dope_profile_id ON dope_points(profile_id)
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -84,7 +87,11 @@ class AppDatabase {
         );
       ''');
       await db.execute(
-          'CREATE UNIQUE INDEX IF NOT EXISTS idx_dope_profile_distance ON dope_points(profile_id, distance_yards);');
+          'CREATE UNIQUE INDEX IF NOT EXISTS idx_dope_profile_distance ON dope_points(profile_id, distance_yards);',);
+    }
+    if (oldVersion < 5) {
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_dope_profile_id ON dope_points(profile_id);',);
     }
   }
 
@@ -98,7 +105,6 @@ class AppDatabase {
           profileId: profileId,
           distanceYards: 100,
           elevation: 0,
-          confirmed: true,
           source: 'Zero',
         ).toMap(),
       );
@@ -166,7 +172,6 @@ class AppDatabase {
           profileId: profileId,
           distanceYards: 100,
           elevation: 0,
-          confirmed: true,
           source: 'Zero',
         );
         final zeroId = await db.insert('dope_points', zeroPoint.toMap());

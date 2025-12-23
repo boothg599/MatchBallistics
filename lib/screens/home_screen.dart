@@ -90,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (mounted) Navigator.pop(context);
               },
               child: const Text('Create'),
-            )
+            ),
           ],
         );
       },
@@ -196,7 +196,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           csvText: csvController.text,
                           defaultDistance: 100,
                           defaultElevation: 0,
-                          markAsConfirmed: true,
                           sourceLabel: template.sourceLabel,
                         );
                         added = result.added;
@@ -206,14 +205,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           csvText: csvController.text,
                           fallbackUnit: unit,
                           sourceLabel: template.sourceLabel,
-                          markAsConfirmed: false,
                         );
                         added = result.added;
                       }
 
                       if (!mounted) return;
                       Navigator.pop(context);
-                      final skippedText = result != null && result.skipped > 0
+                      final skippedText = result.skipped > 0
                           ? ' (${result.skipped} skipped)'
                           : '';
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -233,12 +231,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Text(
                     'Imports from other ballistics apps are marked unconfirmed until you validate them on the range.',
                     style: TextStyle(fontSize: 12),
-                  )
+                  ),
                 ],
               ),
             ),
           );
-        });
+        },);
       },
     );
   }
@@ -254,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.file_upload_outlined),
             tooltip: 'Import profile from CSV',
             onPressed: () => _showImportProfileSheet(provider),
-          )
+          ),
         ],
       ),
       body: provider.isLoading
@@ -272,7 +270,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           onPressed: provider.loadProfiles,
                           icon: const Icon(Icons.refresh),
                           label: const Text('Retry'),
-                        )
+                        ),
                       ],
                     ),
                   ),

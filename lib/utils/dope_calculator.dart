@@ -46,9 +46,9 @@ class DopeCalculator {
 
     if (uniquePoints.length >= 2) {
       final lower = uniquePoints.lastWhere((p) => p.distanceYards < distance,
-          orElse: () => uniquePoints.first);
+          orElse: () => uniquePoints.first,);
       final upper = uniquePoints.firstWhere((p) => p.distanceYards > distance,
-          orElse: () => uniquePoints.last);
+          orElse: () => uniquePoints.last,);
       if (lower.distanceYards == upper.distanceYards) {
         return lower.elevation;
       }
