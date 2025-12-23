@@ -9,7 +9,10 @@ A KISS empirical ballistic calculator for shooters and hunters. The app learns e
 - Dope card generation from 100 to 1200 yards.
 - Cosine calculator for angled shots.
 - Advanced mode to capture muzzle velocity and environmental data per DOPE entry.
-- ShotView CSV import (paste/export) for quickly loading muzzle-velocity strings. Use the import sheet's "Load example CSV" to try the bundled `assets/shotview_example.csv`.
+- CSV imports
+  - Garmin ShotView strings for quickly loading muzzle-velocity series.
+  - GeoBallistics and Applied Ballistics (AB Quantum) drop tables to seed a rifle profile. Imported drops are marked as unconfirmed test data until you validate them.
+  - Use the import sheet's "Load example CSV" buttons to try the bundled assets (`shotview_mv_series.csv`, `geoballistics_export.csv`, `ab_quantum_export.csv`).
 - Offline-first with local SQLite storage.
 
 ## Development

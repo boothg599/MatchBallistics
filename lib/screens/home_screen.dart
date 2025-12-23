@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/import_template.dart';
 import '../models/profile.dart';
 import '../services/profile_provider.dart';
 import 'profile_detail_screen.dart';
@@ -74,12 +76,160 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showImportProfileSheet(ProfileProvider provider) {
+    final nameController = TextEditingController();
+    final csvController = TextEditingController();
+    CsvTemplate template = CsvTemplate.geoBallistics;
+    ElevationUnit unit = _unit;
+    bool advanced = false;
+
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Import profile from CSV', style: TextStyle(fontSize: 18)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Profile name'),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<ElevationUnit>(
+                    value: unit,
+                    decoration: const InputDecoration(labelText: 'Units'),
+                    items: ElevationUnit.values
+                        .map((e) => DropdownMenuItem(value: e, child: Text(e.label)))
+                        .toList(),
+                    onChanged: (val) => setModalState(() => unit = val ?? ElevationUnit.mil),
+                  ),
+                  SwitchListTile(
+                    value: advanced,
+                    onChanged: (val) => setModalState(() => advanced = val),
+                    title: const Text('Advanced mode (MV + environmentals)'),
+                  ),
+                  DropdownButtonFormField<CsvTemplate>(
+                    value: template,
+                    decoration: const InputDecoration(labelText: 'Import source'),
+                    items: CsvTemplate.values
+                        .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
+                        .toList(),
+                    onChanged: (val) => setModalState(() => template = val ?? CsvTemplate.geoBallistics),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () async {
+                          try {
+                            final sample = await rootBundle.loadString(template.assetPath);
+                            csvController.text = sample.trim();
+                          } catch (_) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Unable to load ${template.label} sample CSV')),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Load example'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => csvController.clear(),
+                        icon: const Icon(Icons.clear),
+                        label: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: csvController,
+                    decoration: InputDecoration(
+                      labelText: 'Paste CSV contents',
+                      hintText: 'Paste ${template.label} export here',
+                      alignLabelWithHint: true,
+                    ),
+                    maxLines: 8,
+                    keyboardType: TextInputType.multiline,
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      final name = nameController.text.trim();
+                      if (name.isEmpty || csvController.text.trim().isEmpty) return;
+                      final profileId = await provider.addProfile(name, unit, advanced: advanced);
+                      int added = 0;
+                      if (template == CsvTemplate.shotView) {
+                        added = await provider.importShotViewCsv(
+                          profileId: profileId,
+                          csvText: csvController.text,
+                          defaultDistance: 100,
+                          defaultElevation: 0,
+                          markAsConfirmed: true,
+                          sourceLabel: template.sourceLabel,
+                        );
+                      } else {
+                        final result = await provider.importBallisticsCsv(
+                          profileId: profileId,
+                          csvText: csvController.text,
+                          fallbackUnit: unit,
+                          sourceLabel: template.sourceLabel,
+                          markAsConfirmed: false,
+                        );
+                        added = result.added;
+                      }
+
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Created $name with $added imported points')),
+                      );
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ProfileDetailScreen(profileId: profileId),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Create from CSV'),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Imports from other ballistics apps are marked unconfirmed until you validate them on the range.',
+                    style: TextStyle(fontSize: 12),
+                  )
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ProfileProvider>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Empirical Dope'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: 'Import profile from CSV',
+            onPressed: () => _showImportProfileSheet(provider),
+          )
+        ],
       ),
       body: provider.isLoading
           ? const Center(child: CircularProgressIndicator())

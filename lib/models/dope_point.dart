@@ -7,6 +7,8 @@ class DopePoint {
   final double? temperatureF;
   final double? pressureInHg;
   final double? humidityPercent;
+  final bool confirmed;
+  final String? source;
 
   DopePoint({
     this.id,
@@ -17,6 +19,8 @@ class DopePoint {
     this.temperatureF,
     this.pressureInHg,
     this.humidityPercent,
+    this.confirmed = true,
+    this.source,
   });
 
   DopePoint copyWith({
@@ -28,6 +32,8 @@ class DopePoint {
     double? temperatureF,
     double? pressureInHg,
     double? humidityPercent,
+    bool? confirmed,
+    String? source,
   }) {
     return DopePoint(
       id: id ?? this.id,
@@ -38,6 +44,8 @@ class DopePoint {
       temperatureF: temperatureF ?? this.temperatureF,
       pressureInHg: pressureInHg ?? this.pressureInHg,
       humidityPercent: humidityPercent ?? this.humidityPercent,
+      confirmed: confirmed ?? this.confirmed,
+      source: source ?? this.source,
     );
   }
 
@@ -51,6 +59,8 @@ class DopePoint {
       'temperature_f': temperatureF,
       'pressure_inhg': pressureInHg,
       'humidity_percent': humidityPercent,
+      'confirmed': confirmed ? 1 : 0,
+      'source': source,
     };
   }
 
@@ -64,6 +74,8 @@ class DopePoint {
       temperatureF: (map['temperature_f'] as num?)?.toDouble(),
       pressureInHg: (map['pressure_inhg'] as num?)?.toDouble(),
       humidityPercent: (map['humidity_percent'] as num?)?.toDouble(),
+      confirmed: (map['confirmed'] as int? ?? 1) == 1,
+      source: map['source'] as String?,
     );
   }
 }

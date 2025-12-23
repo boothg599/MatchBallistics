@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/import_template.dart';
 import '../models/dope_point.dart';
 import '../models/profile.dart';
 import '../services/profile_provider.dart';
@@ -32,6 +33,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
   final _formatter = NumberFormat('##0.00');
   String? _prediction;
   String? _cosine;
+  CsvTemplate _template = CsvTemplate.shotView;
 
   @override
   void dispose() {
@@ -74,19 +76,19 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
     _humidityController.clear();
   }
 
-  Future<void> _loadSampleCsv(BuildContext context) async {
+  Future<void> _loadSampleCsv(BuildContext context, CsvTemplate template) async {
     try {
-      final sample = await rootBundle.loadString('assets/shotview_example.csv');
+      final sample = await rootBundle.loadString(template.assetPath);
       _csvController.text = sample.trim();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Loaded sample ShotView export into form')),
+          SnackBar(content: Text('Loaded example ${template.label} CSV into form')),
         );
       }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to load sample CSV from assets')),
+        SnackBar(content: Text('Unable to load ${template.label} CSV from assets')),
       );
     }
   }
@@ -115,88 +117,120 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
       showDragHandle: true,
       isScrollControlled: true,
       builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Import ShotView CSV'),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _csvDistanceController,
-                        decoration: const InputDecoration(labelText: 'Default distance (yd)'),
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _csvElevationController,
-                        decoration: InputDecoration(labelText: 'Default elevation (${profile.unit.label})'),
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => _loadSampleCsv(context),
-                      icon: const Icon(Icons.file_download_outlined),
-                      label: const Text('Load example CSV'),
-                    ),
-                    TextButton.icon(
-                      onPressed: () => _csvController.clear(),
-                      icon: const Icon(Icons.clear),
-                      label: const Text('Clear'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _csvController,
-                  decoration: const InputDecoration(
-                    labelText: 'Paste CSV contents',
-                    hintText: 'Copy from Garmin ShotView export and paste here',
-                    alignLabelWithHint: true,
+        return StatefulBuilder(builder: (context, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Import CSV'),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<CsvTemplate>(
+                    value: _template,
+                    decoration: const InputDecoration(labelText: 'Source'),
+                    items: CsvTemplate.values
+                        .map((t) => DropdownMenuItem(value: t, child: Text(t.label)))
+                        .toList(),
+                    onChanged: (val) => setModalState(() => _template = val ?? CsvTemplate.shotView),
                   ),
-                  maxLines: 8,
-                  keyboardType: TextInputType.multiline,
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    final defaultDistance = double.tryParse(_csvDistanceController.text);
-                    final defaultElevation = double.tryParse(_csvElevationController.text);
-                    final added = await provider.importShotViewCsv(
-                      profileId: profile.id!,
-                      csvText: _csvController.text,
-                      defaultDistance: defaultDistance,
-                      defaultElevation: defaultElevation,
-                    );
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Imported $added shots from CSV')),
-                    );
-                    _csvController.clear();
-                    _csvDistanceController.clear();
-                    _csvElevationController.clear();
-                  },
-                  icon: const Icon(Icons.file_upload_outlined),
-                  label: const Text('Import'),
-                )
-              ],
+                  const SizedBox(height: 8),
+                  if (_template == CsvTemplate.shotView) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _csvDistanceController,
+                            decoration: const InputDecoration(labelText: 'Default distance (yd)'),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _csvElevationController,
+                            decoration: InputDecoration(labelText: 'Default elevation (${profile.unit.label})'),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => _loadSampleCsv(context, _template),
+                        icon: const Icon(Icons.file_download_outlined),
+                        label: const Text('Load example CSV'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _csvController.clear(),
+                        icon: const Icon(Icons.clear),
+                        label: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _csvController,
+                    decoration: InputDecoration(
+                      labelText: 'Paste CSV contents',
+                      hintText: 'Copy from ${_template.label} export and paste here',
+                      alignLabelWithHint: true,
+                    ),
+                    maxLines: 8,
+                    keyboardType: TextInputType.multiline,
+                  ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      final defaultDistance = double.tryParse(_csvDistanceController.text);
+                      final defaultElevation = double.tryParse(_csvElevationController.text);
+                      int added = 0;
+                      if (_template == CsvTemplate.shotView) {
+                        added = await provider.importShotViewCsv(
+                          profileId: profile.id!,
+                          csvText: _csvController.text,
+                          defaultDistance: defaultDistance,
+                          defaultElevation: defaultElevation,
+                          markAsConfirmed: true,
+                          sourceLabel: _template.sourceLabel,
+                        );
+                      } else {
+                        final result = await provider.importBallisticsCsv(
+                          profileId: profile.id!,
+                          csvText: _csvController.text,
+                          fallbackUnit: profile.unit,
+                          sourceLabel: _template.sourceLabel,
+                          markAsConfirmed: false,
+                        );
+                        added = result.added;
+                      }
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Imported $added shots from ${_template.label}')),
+                      );
+                      _csvController.clear();
+                      _csvDistanceController.clear();
+                      _csvElevationController.clear();
+                    },
+                    icon: const Icon(Icons.file_upload_outlined),
+                    label: const Text('Import'),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Data imported from other ballistics apps is treated as unconfirmed test data until you validate it.',
+                    style: TextStyle(fontSize: 12),
+                  )
+                ],
+              ),
             ),
-          ),
-        );
+          );
+        });
       },
     );
   }
@@ -214,6 +248,9 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
     }
     if (p.humidityPercent != null) {
       parts.add('Humidity ${_formatter.format(p.humidityPercent!)}%');
+    }
+    if (p.source != null) {
+      parts.add(p.source!);
     }
     return parts.join(' • ');
   }
@@ -272,6 +309,13 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
             ...points.map(
               (p) {
                 final meta = _metaForPoint(p);
+                final chips = <Widget>[];
+                if (!p.confirmed) {
+                  chips.add(const Chip(label: Text('Unconfirmed test'), visualDensity: VisualDensity.compact));
+                }
+                if (p.source != null) {
+                  chips.add(Chip(label: Text(p.source!), visualDensity: VisualDensity.compact));
+                }
                 return Card(
                   child: ListTile(
                     title: Row(
@@ -280,12 +324,33 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                         Expanded(child: Text('${_formatter.format(p.elevation)} ${profile.unit.label}')),
                       ],
                     ),
-                    subtitle: meta.isEmpty ? null : Text(meta),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (meta.isNotEmpty) Text(meta),
+                        if (chips.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4.0),
+                            child: Wrap(spacing: 6, runSpacing: -6, children: chips),
+                          ),
+                      ],
+                    ),
                     trailing: p.distanceYards == 100
                         ? const SizedBox(width: 24)
-                        : IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => provider.deleteDopePoint(profile.id!, p.id!),
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!p.confirmed)
+                                IconButton(
+                                  tooltip: 'Mark confirmed',
+                                  icon: const Icon(Icons.verified_outlined),
+                                  onPressed: () => provider.confirmDopePoint(profile.id!, p),
+                                ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => provider.deleteDopePoint(profile.id!, p.id!),
+                              ),
+                            ],
                           ),
                   ),
                 );
@@ -374,12 +439,11 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           onPressed: () => _addDope(provider, profile),
                           child: const Text('Save'),
                         ),
-                        if (profile.advancedMode)
-                          TextButton.icon(
-                            onPressed: () => _showCsvImport(provider, profile),
-                            icon: const Icon(Icons.file_upload_outlined),
-                            label: const Text('Import ShotView CSV'),
-                          )
+                        TextButton.icon(
+                          onPressed: () => _showCsvImport(provider, profile),
+                          icon: const Icon(Icons.file_upload_outlined),
+                          label: const Text('Import CSV'),
+                        )
                       ],
                     ),
                   ],

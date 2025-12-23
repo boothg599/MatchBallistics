@@ -9,7 +9,17 @@ class DopeCalculator {
       return double.nan;
     }
 
-    final sortedPoints = [...points]..sort((a, b) => a.distanceYards.compareTo(b.distanceYards));
+    final zero = points.where((p) => p.distanceYards == 100).toList();
+    final confirmedBeyondZero = points.where((p) => p.confirmed && p.distanceYards != 100).toList();
+    final fallbackPoints = confirmedBeyondZero.isNotEmpty
+        ? [
+            ...confirmedBeyondZero,
+            if (zero.isNotEmpty) zero.first,
+          ]
+        : points;
+
+    final sortedPoints = [...fallbackPoints]..sort((a, b) => a.distanceYards.compareTo(b.distanceYards));
+    final uniquePoints = _uniquePoints(sortedPoints);
     final match = sortedPoints.firstWhere(
       (p) => (p.distanceYards - distance).abs() < 0.001,
       orElse: () => DopePoint(profileId: -1, distanceYards: -1, elevation: -1),
@@ -18,22 +28,22 @@ class DopeCalculator {
       return match.elevation;
     }
 
-    if (sortedPoints.length >= 3) {
+    if (uniquePoints.length >= 3) {
       final fit = fitQuadratic(
-        sortedPoints.map((p) => Point<double>(p.distanceYards, p.elevation)).toList(),
+        uniquePoints,
       );
       final y = fit.evaluate(distance);
       return y;
     }
 
-    if (sortedPoints.length >= 2) {
-      final lower = sortedPoints.lastWhere((p) => p.distanceYards < distance, orElse: () => sortedPoints.first);
-      final upper = sortedPoints.firstWhere((p) => p.distanceYards > distance, orElse: () => sortedPoints.last);
-      if (lower.distanceYards == upper.distanceYards) {
-        return lower.elevation;
+    if (uniquePoints.length >= 2) {
+      final lower = uniquePoints.lastWhere((p) => p.x < distance, orElse: () => uniquePoints.first);
+      final upper = uniquePoints.firstWhere((p) => p.x > distance, orElse: () => uniquePoints.last);
+      if (lower.x == upper.x) {
+        return lower.y;
       }
-      final ratio = (distance - lower.distanceYards) / (upper.distanceYards - lower.distanceYards);
-      return lower.elevation + ratio * (upper.elevation - lower.elevation);
+      final ratio = (distance - lower.x) / (upper.x - lower.x);
+      return lower.y + ratio * (upper.y - lower.y);
     }
 
     final base = sortedPoints.first;
@@ -44,5 +54,23 @@ class DopeCalculator {
   static double cosineMultiplier(double angleDegrees) {
     final radians = angleDegrees * pi / 180;
     return cos(radians);
+  }
+
+  static List<Point<double>> _uniquePoints(List<DopePoint> points) {
+    final grouped = <String, List<DopePoint>>{};
+    for (final p in points) {
+      final key = p.distanceYards.toStringAsFixed(3);
+      grouped.putIfAbsent(key, () => []).add(p);
+    }
+
+    final averaged = grouped.entries.map((entry) {
+      final distance = entry.value.first.distanceYards;
+      final totalElevation = entry.value.fold<double>(0, (sum, p) => sum + p.elevation);
+      final avgElevation = totalElevation / entry.value.length;
+      return Point<double>(distance, avgElevation);
+    }).toList();
+
+    averaged.sort((a, b) => a.x.compareTo(b.x));
+    return averaged;
   }
 }

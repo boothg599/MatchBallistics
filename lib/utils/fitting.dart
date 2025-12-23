@@ -13,10 +13,10 @@ class PolynomialFitResult {
   }
 }
 
-List<double> _solve3x3(List<List<double>> a, List<double> b) {
+List<double>? _solve3x3(List<List<double>> a, List<double> b) {
   final detA = _determinant3x3(a);
   if (detA.abs() < 1e-9) {
-    return [0, 0, 0];
+    return null;
   }
   final d1 = _determinant3x3([b, a[1], a[2]]);
   final d2 = _determinant3x3([a[0], b, a[2]]);
@@ -55,6 +55,14 @@ PolynomialFitResult fitQuadratic(List<Point<double>> points) {
   ];
   final matrixB = [sy, sxy, sx2y];
   final coeffs = _solve3x3(matrixA, matrixB);
+
+  if (coeffs == null) {
+    final linearFit = fitLinear(points);
+    return PolynomialFitResult(
+      coefficients: [...linearFit.coefficients, 0],
+      rSquared: linearFit.rSquared,
+    );
+  }
 
   final meanY = sy / n;
   double ssTot = 0;

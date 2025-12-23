@@ -5,6 +5,13 @@ import '../models/profile.dart';
 import '../utils/dope_calculator.dart';
 import 'db.dart';
 
+class ImportResult {
+  ImportResult({required this.added, this.detectedUnit});
+
+  final int added;
+  final ElevationUnit? detectedUnit;
+}
+
 class ProfileProvider extends ChangeNotifier {
   final _db = AppDatabase.instance;
   List<Profile> _profiles = [];
@@ -29,7 +36,7 @@ class ProfileProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> addProfile(String name, ElevationUnit unit, {bool advanced = false}) async {
+  Future<int> addProfile(String name, ElevationUnit unit, {bool advanced = false}) async {
     final profile = Profile(
       id: null,
       name: name,
@@ -38,10 +45,17 @@ class ProfileProvider extends ChangeNotifier {
       advancedMode: advanced,
     );
     final id = await _db.insertProfile(profile);
-    final basePoint = DopePoint(profileId: id, distanceYards: 100, elevation: 0);
+    final basePoint = DopePoint(
+      profileId: id,
+      distanceYards: 100,
+      elevation: 0,
+      confirmed: true,
+      source: 'Zero',
+    );
     final newProfile = profile.copyWith(id: id, dopePoints: [basePoint]);
     _profiles = [..._profiles, newProfile];
     notifyListeners();
+    return id;
   }
 
   Future<void> updateProfile(Profile profile) async {
@@ -64,6 +78,8 @@ class ProfileProvider extends ChangeNotifier {
     double? temperatureF,
     double? pressureInHg,
     double? humidityPercent,
+    bool confirmed = true,
+    String? source,
   }) async {
     final newPoint = DopePoint(
       profileId: profileId,
@@ -73,6 +89,8 @@ class ProfileProvider extends ChangeNotifier {
       temperatureF: temperatureF,
       pressureInHg: pressureInHg,
       humidityPercent: humidityPercent,
+      confirmed: confirmed,
+      source: source,
     );
     final id = await _db.insertDopePoint(newPoint);
     final pointWithId = newPoint.copyWith(id: id);
@@ -91,6 +109,19 @@ class ProfileProvider extends ChangeNotifier {
     _profiles = _profiles.map((p) {
       if (p.id == profileId) {
         final updatedPoints = p.dopePoints.where((dp) => dp.id != pointId).toList();
+        return p.copyWith(dopePoints: updatedPoints);
+      }
+      return p;
+    }).toList();
+    notifyListeners();
+  }
+
+  Future<void> confirmDopePoint(int profileId, DopePoint point) async {
+    final updated = point.copyWith(confirmed: true);
+    await _db.updateDopePoint(updated);
+    _profiles = _profiles.map((p) {
+      if (p.id == profileId) {
+        final updatedPoints = p.dopePoints.map((dp) => dp.id == point.id ? updated : dp).toList();
         return p.copyWith(dopePoints: updatedPoints);
       }
       return p;
@@ -120,6 +151,8 @@ class ProfileProvider extends ChangeNotifier {
     required String csvText,
     double? defaultDistance,
     double? defaultElevation,
+    bool markAsConfirmed = true,
+    String sourceLabel = 'ShotView CSV',
   }) async {
     final trimmed = csvText.trim();
     if (trimmed.isEmpty) return 0;
@@ -165,10 +198,76 @@ class ProfileProvider extends ChangeNotifier {
         temperatureF: temp,
         pressureInHg: pressure,
         humidityPercent: humidity,
+        confirmed: markAsConfirmed,
+        source: sourceLabel,
       );
       added++;
     }
     return added;
+  }
+
+  Future<ImportResult> importBallisticsCsv({
+    required int profileId,
+    required String csvText,
+    required ElevationUnit fallbackUnit,
+    String sourceLabel = 'External CSV',
+    bool markAsConfirmed = false,
+  }) async {
+    final trimmed = csvText.trim();
+    if (trimmed.isEmpty) return ImportResult(added: 0);
+    final lines = trimmed.split('\n');
+    if (lines.length <= 1) return ImportResult(added: 0);
+
+    final header = _splitCsvLine(lines.first.toLowerCase());
+
+    int indexOf(List<String> names) {
+      return header.indexWhere((h) => names.any((n) => h.contains(n)));
+    }
+
+    final idxDistance = indexOf(['distance', 'range', 'yard', 'yd']);
+    final idxElevation = indexOf(['drop', 'dope', 'elevation', 'adj']);
+
+    ElevationUnit? detectedUnit;
+    if (header.any((h) => h.contains('moa'))) {
+      detectedUnit = ElevationUnit.moa;
+    } else if (header.any((h) => h.contains('mil') || h.contains('mrad'))) {
+      detectedUnit = ElevationUnit.mil;
+    }
+
+    int added = 0;
+    for (int i = 1; i < lines.length; i++) {
+      final row = lines[i].trim();
+      if (row.isEmpty) continue;
+      final cols = _splitCsvLine(row);
+
+      double? parseAt(int idx) {
+        if (idx < 0 || idx >= cols.length) return null;
+        final cleaned = cols[idx].replaceAll(RegExp(r'[^0-9.-]'), '');
+        return double.tryParse(cleaned);
+      }
+
+      final distance = parseAt(idxDistance);
+      final elevation = parseAt(idxElevation);
+      if (distance == null || elevation == null) continue;
+
+      await addDopePoint(
+        profileId,
+        distance,
+        elevation,
+        confirmed: markAsConfirmed,
+        source: sourceLabel,
+      );
+      added++;
+    }
+
+    // Update profile unit if the CSV clearly indicated another unit.
+    final profile = getProfileById(profileId);
+    if (profile != null && detectedUnit != null && detectedUnit != profile.unit) {
+      final updated = profile.copyWith(unit: detectedUnit);
+      await updateProfile(updated);
+    }
+
+    return ImportResult(added: added, detectedUnit: detectedUnit ?? fallbackUnit);
   }
 
   List<String> _splitCsvLine(String line) {

@@ -23,4 +23,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/shotview_example.csv
+    - assets/shotview_mv_series.csv
+    - assets/geoballistics_export.csv
+    - assets/ab_quantum_export.csv

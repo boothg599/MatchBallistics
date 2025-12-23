@@ -9,7 +9,7 @@ import '../models/profile.dart';
 class AppDatabase {
   static final AppDatabase instance = AppDatabase._internal();
   static const _dbName = 'empirical_dope.db';
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   Database? _database;
 
@@ -52,6 +52,8 @@ class AppDatabase {
         temperature_f REAL,
         pressure_inhg REAL,
         humidity_percent REAL,
+        confirmed INTEGER NOT NULL DEFAULT 1,
+        source TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles (id) ON DELETE CASCADE
       )
     ''');
@@ -65,6 +67,10 @@ class AppDatabase {
       await db.execute('ALTER TABLE dope_points ADD COLUMN pressure_inhg REAL;');
       await db.execute('ALTER TABLE dope_points ADD COLUMN humidity_percent REAL;');
     }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE dope_points ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1;');
+      await db.execute('ALTER TABLE dope_points ADD COLUMN source TEXT;');
+    }
   }
 
   Future<int> insertProfile(Profile profile) async {
@@ -74,6 +80,8 @@ class AppDatabase {
       profileId: profileId,
       distanceYards: 100,
       elevation: 0,
+      confirmed: true,
+      source: 'Zero',
     ));
     return profileId;
   }
@@ -133,8 +141,10 @@ class AppDatabase {
           profileId: profileId,
           distanceYards: 100,
           elevation: 0,
+          confirmed: true,
+          source: 'Zero',
         ));
-        dopePoints.add(DopePoint(profileId: profileId, distanceYards: 100, elevation: 0));
+        dopePoints.add(DopePoint(profileId: profileId, distanceYards: 100, elevation: 0, confirmed: true, source: 'Zero'));
       }
       profiles.add(Profile.fromMap(map, dopePoints));
     }
