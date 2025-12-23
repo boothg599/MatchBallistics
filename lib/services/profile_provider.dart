@@ -234,6 +234,10 @@ class ProfileProvider extends ChangeNotifier {
       detectedUnit = ElevationUnit.mil;
     }
 
+    final existingDistances = <double>{
+      ...?getProfileById(profileId)?.dopePoints.map((p) => p.distanceYards),
+    };
+
     int added = 0;
     for (int i = 1; i < lines.length; i++) {
       final row = lines[i].trim();
@@ -249,6 +253,18 @@ class ProfileProvider extends ChangeNotifier {
       final distance = parseAt(idxDistance);
       final elevation = parseAt(idxElevation);
       if (distance == null || elevation == null) continue;
+
+      // Skip the built-in 100 yard zero and any duplicate range entries to avoid
+      // cluttering imported profiles with redundant rows.
+      if ((distance - 100).abs() < 0.001 && elevation.abs() < 0.001) {
+        continue;
+      }
+      final alreadyPresent = existingDistances.any((d) => (d - distance).abs() < 0.001);
+      if (alreadyPresent) {
+        continue;
+      }
+
+      existingDistances.add(distance);
 
       await addDopePoint(
         profileId,
